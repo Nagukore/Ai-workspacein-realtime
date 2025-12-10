@@ -1,327 +1,316 @@
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.middleware.cors import CORSMiddleware
-from supabase import create_client, Client
-from pydantic import BaseModel
+# server.py
+import os
+import sys
+import logging
 from datetime import datetime
-import bcrypt
-import logging, sys
+from typing import Optional
 
-# ============================
-# 🧠 Logging Setup
-# ============================
-# Configure logging to output to stdout
+import bcrypt
+import requests
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from supabase import create_client, Client
+
+
+# ===========================================================
+# ENVIRONMENT VARIABLES (ONE SUPABASE PROJECT ONLY)
+# ===========================================================
+SUPABASE_URL = os.getenv(
+    "SUPABASE_URL",
+    "https://lqfxbenyazhbxgnikmvu.supabase.co"   # USE ANY ONE PROJECT — YOU SAID NOW IT’S SAME PROJECT
+)
+
+SUPABASE_KEY = os.getenv(
+    "SUPABASE_KEY",
+    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxxZnhiZW55YXpoYnhnbmlrbXZ1Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2MTM4NTYzMCwiZXhwIjoyMDc2OTYxNjMwfQ.SV2XmwMKU4nWiYObEUnJtxgLyD89aXiHpfD8n-zOreU"
+)
+
+
+# ===========================================================
+# LOGGING
+# ===========================================================
 logging.basicConfig(
     stream=sys.stdout,
     level=logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(message)s",
+    format="%(asctime)s | %(levelname)s | %(message)s"
 )
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("ai-workspace-backend")
 
-# ============================
-# 🔗 Supabase Connections (2 Projects)
-# ============================
 
-# --- 1️⃣ AUTH DATABASE ---
-SUPABASE_AUTH_URL = "https://lqfxbenyazhbxgnikmvu.supabase.co"
-SUPABASE_AUTH_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxxZnhiZW55YXpoYnhnbmlrbXZ1Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2MTM4NTYzMCwiZXhwIjoyMDc2OTYxNjMwfQ.SV2XmwMKU4nWiYObEUnJtxgLyD89aXiHpfD8n-zOreU"
-# --- 2️⃣ TRANSCRIPTS DATABASE ---
-SUPABASE_TRANSCRIPT_URL = "https://phoelhjhfpvawdwywtxx.supabase.co"
-# Make sure to paste your valid service_role key here
-SUPABASE_TRANSCRIPT_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBob2VsaGpoZnB2YXdkd3l3dHh4Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2MTk5NTk3OCwiZXhwIjoyMDc3NTcxOTc4fQ.xN3Y6PaghIrP3ely9bgeryXvyvj8_cvFmSQDI8IFStU"
+# ===========================================================
+# CREATE ONE SUPABASE CLIENT
+# ===========================================================
+try:
+    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+    logger.info("Supabase client initialized (single project).")
+except Exception as e:
+    logger.exception("Failed to initialize Supabase client.")
+    raise
 
-# ============================
-# 🚀 FastAPI App
-# ============================
-app = FastAPI(title="AI Workspace Backend", version="2.0")
 
-# ============================
-# 🌐 CORS Setup
-# ============================
+# ===========================================================
+# FASTAPI INITIALIZATION
+# ===========================================================
+app = FastAPI(title="AI Workspace Backend", version="3.0")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "*",  # For local development; restrict in production
-        "http://localhost:3000",
-        "https://your-frontend.vercel.app",
-    ],
+    allow_origins=["*", "http://localhost:3000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# ============================
-# 🧠 Supabase Clients
-# ============================
-try:
-    supabase_auth: Client = create_client(SUPABASE_AUTH_URL, SUPABASE_AUTH_KEY)
-    supabase_transcript: Client = create_client(SUPABASE_TRANSCRIPT_URL, SUPABASE_TRANSCRIPT_KEY)
-    logger.info("Supabase clients initialized successfully.")
-except Exception as e:
-    logger.error(f"💥 Failed to initialize Supabase clients: {e}")
-    sys.exit(1)
 
-
-# ============================
-# 📦 Pydantic Models
-# ============================
+# ===========================================================
+# PYDANTIC MODELS
+# ===========================================================
 class SignupData(BaseModel):
     name: str
     email: str
     password: str
-    role: str | None = "EMPLOYEE"
+    role: Optional[str] = "EMPLOYEE"
+    department: Optional[str] = None
+
 
 class LoginData(BaseModel):
     email: str
     password: str
 
+
+class TaskData(BaseModel):
+    title: str
+    description: Optional[str] = ""
+    status: Optional[str] = "Pending"
+    assigned_to: Optional[str] = None
+    due_date: Optional[str] = None
+
+
 class TranscriptData(BaseModel):
     meeting_name: str
     transcript: str
-    summary: str | None = None
-    tasks: str | None = None
-    pending_tasks: str | None = None
+    summary: Optional[str] = ""
+    tasks: Optional[str] = ""
+    pending_tasks: Optional[str] = ""
 
-# ============================
-# ❤️ Health Check
-# ============================
-@app.get("/")
-def root():
-    logger.info("✅ Backend health check successful")
-    return {
-        "status": "running",
-        "message": "Backend connected successfully!",
-        "auth_db_url": SUPABASE_AUTH_URL,
-        "transcript_db_url": SUPABASE_TRANSCRIPT_URL,
+
+# ===========================================================
+# CREATE SUPABASE AUTH USER
+# ===========================================================
+def create_supabase_auth_user(email: str, password: str, user_metadata=None) -> dict:
+    admin_url = SUPABASE_URL.rstrip("/") + "/auth/v1/admin/users"
+
+    headers = {
+        "apikey": SUPABASE_KEY,
+        "Authorization": f"Bearer {SUPABASE_KEY}",
+        "Content-Type": "application/json",
     }
 
-# ============================
-# 🧩 SIGNUP Route
-# ============================
+    body = {
+        "email": email,
+        "password": password,
+        "email_confirm": True,
+        "user_metadata": user_metadata or {},
+    }
+
+    logger.info("Creating Supabase auth user: %s", email)
+    resp = requests.post(admin_url, json=body, headers=headers, timeout=15)
+
+    if resp.status_code not in (200, 201):
+        try:
+            msg = resp.json().get("message")
+        except:
+            msg = resp.text
+        raise HTTPException(status_code=500, detail=f"Supabase auth error: {msg}")
+
+    return resp.json()
+
+
+# ===========================================================
+# BASE ENDPOINT
+# ===========================================================
+@app.get("/")
+def root():
+    return {"status": "ok", "message": "AI Workspace Backend Running"}
+
+
+# ===========================================================
+# SIGNUP
+# ===========================================================
 @app.post("/signup")
 def signup_user(data: SignupData):
     try:
-        logger.info(f"🟢 Signup attempt: {data.email}")
+        logger.info("Signup attempt for %s", data.email)
 
-        # Check if user exists
-        existing = supabase_auth.table("Employee").select("email").eq("email", data.email).execute()
+        existing = supabase.table("employee").select("id").eq("email", data.email).execute()
         if existing.data:
             raise HTTPException(status_code=400, detail="User already exists")
 
-        # Hash password
-        hashed_pw = bcrypt.hashpw(data.password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+        created_user = create_supabase_auth_user(
+            email=data.email,
+            password=data.password,
+            user_metadata={"name": data.name, "role": data.role},
+        )
 
-        # Insert new record
+        supa_user_id = created_user.get("id")
+
+        hashed_pw = bcrypt.hashpw(data.password.encode(), bcrypt.gensalt()).decode()
+
         payload = {
             "name": data.name,
             "email": data.email,
             "password": hashed_pw,
-            "role": data.role or "EMPLOYEE",
+            "role": data.role,
+            "department": data.department,
+            "supabase_user_id": supa_user_id,
             "createdAt": datetime.utcnow().isoformat(),
         }
 
-        response = supabase_auth.table("Employee").insert(payload).execute()
-        
-        # if response.error:  <-- REMOVED THIS BLOCK
-        #     logger.error(f"Supabase signup error: {response.error}")
-        #     raise HTTPException(status_code=500, detail=str(response.error))
+        resp = supabase.table("employee").insert(payload).execute()
+        return {"success": True, "user": resp.data}
 
-        logger.info(f"✅ Signup successful for {data.email}")
-        return {"success": True, "message": "Signup successful", "data": response.data}
-
-    except HTTPException as e:
-        logger.warning(f"⚠️ Signup validation error: {e.detail}")
-        raise e
     except Exception as e:
-        logger.error(f"💥 Signup Error: {e}")
+        logger.exception("Signup error")
         raise HTTPException(status_code=500, detail=str(e))
 
-# ============================
-# 🔐 LOGIN Route
-# ============================
+
+# ===========================================================
+# LOGIN
+# ===========================================================
 @app.post("/login")
 def login_user(data: LoginData):
     try:
-        logger.info(f"🟢 Login attempt: {data.email}")
-        result = supabase_auth.table("Employee").select("*").eq("email", data.email).execute()
+        logger.info("Login attempt: %s", data.email)
 
-        if not result.data:
+        result = supabase.table("employee").select("*").eq("email", data.email).execute()
+        rows = result.data
+
+        if not rows:
             raise HTTPException(status_code=404, detail="User not found")
 
-        user = result.data[0]
-        stored_password = user.get("password")
+        user = rows[0]
+        stored_hash = user["password"]
 
-        if not stored_password:
-            raise HTTPException(status_code=500, detail="Password missing in DB")
-
-        # Auto-hash old plain-text passwords (optional but good)
-        if not stored_password.startswith("$2b$"):
-            if stored_password == data.password:
-                logger.info(f"Hashing legacy password for {data.email}")
-                new_hash = bcrypt.hashpw(data.password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
-                supabase_auth.table("Employee").update({"password": new_hash}).eq("email", data.email).execute()
-                stored_password = new_hash
+        if not stored_hash.startswith("$2"):
+            if stored_hash == data.password:
+                new_hash = bcrypt.hashpw(data.password.encode(), bcrypt.gensalt()).decode()
+                supabase.table("employee").update({"password": new_hash}).eq("email", data.email).execute()
+                stored_hash = new_hash
             else:
                 raise HTTPException(status_code=401, detail="Invalid credentials")
 
-        # Validate bcrypt hash
-        if not bcrypt.checkpw(data.password.encode("utf-8"), stored_password.encode("utf-8")):
+        if not bcrypt.checkpw(data.password.encode(), stored_hash.encode()):
             raise HTTPException(status_code=401, detail="Invalid credentials")
 
-        logger.info(f"✅ Login successful for: {user['email']}")
-        # Don't send the password hash back to the client
-        user.pop("password", None) 
-        return {"success": True, "message": "Login successful", "user": user}
+        user.pop("password", None)
 
-    except HTTPException as e:
-        logger.warning(f"⚠️ Login error: {e.detail}")
-        raise e
-    except Exception as e:
-        logger.error(f"💥 Login Error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-# ============================
-# 🧾 MEETING TRANSCRIPTS (From 2nd Supabase)
-# ============================
-@app.post("/meeting-transcript")
-def upload_transcript(data: TranscriptData):
-    try:
-        logger.info(f"📝 Uploading meeting transcript: {data.meeting_name}")
-
-        payload = {
-            "meeting_name": data.meeting_name,
-            "transcript": data.transcript,
-            "summary": data.summary or "",
-            "tasks": data.tasks or "",
-            "pending_tasks": data.pending_tasks or "",
-            "created_at": datetime.utcnow().isoformat(),
-        }
-
-        response = supabase_transcript.table("transcripts").insert(payload).execute()
-        
-        # if response.error:  <-- REMOVED THIS BLOCK
-        #     logger.error(f"Supabase transcript insert error: {response.error}")
-        #     raise HTTPException(status_code=500, detail=str(response.error))
-
-        logger.info(f"✅ Transcript inserted successfully: {data.meeting_name}")
-        return {"success": True, "message": "Transcript saved successfully!", "data": response.data}
+        return {"success": True, "user": user}
 
     except Exception as e:
-        logger.error(f"💥 Upload Transcript Error: {e}")
+        logger.exception("Login error")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/meeting-transcript")
-def get_all_transcripts():
-    try:
-        logger.info("Fetching all transcripts")
-        response = (
-            supabase_transcript.table("transcripts")
-            .select("id, meeting_name, transcript, summary, tasks, pending_tasks, created_at")
-            .order("created_at", desc=True)
-            .execute()
-        )
 
-        # if response.error:  <-- REMOVED THIS BLOCK
-        #     logger.error(f"Supabase transcript fetch error: {response.error}")
-        #     raise HTTPException(status_code=500, detail=str(response.error))
-        
-        logger.info(f"Found {len(response.data)} transcripts.")
-        return {"success": True, "data": response.data or []}
-
-    except Exception as e:
-        logger.error(f"💥 Fetch Transcript Error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/meeting-summary")
-def get_meeting_summary():
-    try:
-        logger.info("Fetching meeting summaries")
-        response = (
-            supabase_transcript.table("transcripts")
-            .select("id, meeting_name, summary, tasks, pending_tasks, created_at")
-            .order("created_at", desc=True)
-            .limit(5)
-            .execute()
-        )
-
-        # if response.error:  <-- REMOVED THIS BLOCK
-        #     logger.error(f"Supabase summary fetch error: {response.error}")
-        #     raise HTTPException(status_code=500, detail=str(response.error))
-        
-        logger.info(f"Found {len(response.data)} summaries.")
-        return {"success": True, "data": response.data or []}
-
-    except Exception as e:
-        logger.error(f"💥 Meeting Summary Error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-    # ============================
-# ✅ TASK MANAGEMENT (Two-way sync with Supabase)
-# ============================
-
-class TaskData(BaseModel):
-    title: str
-    description: str
-    status: str | None = "Pending"
-    assigned_to: str | None = None
-    due_date: str | None = None
-
-
+# ===========================================================
+# TASK MANAGEMENT (SAME PROJECT)
+# ===========================================================
 @app.post("/tasks")
 def create_task(data: TaskData):
-    """Add a new task"""
     try:
-        logger.info(f"🟢 Creating task: {data.title}")
+        logger.info("Creating task: %s", data.title)
 
         payload = {
+            "user_id": data.assigned_to,
             "title": data.title,
-            "description": data.description,
+            "description": data.description or "",
             "status": data.status or "Pending",
-            "assigned_to": data.assigned_to or "",
             "due_date": data.due_date,
             "created_at": datetime.utcnow().isoformat(),
         }
 
-        response = supabase_transcript.table("tasks").insert(payload).execute()
-
-        logger.info(f"✅ Task created successfully: {data.title}")
-        return {"success": True, "message": "Task created successfully", "data": response.data}
+        resp = supabase.table("tasks").insert(payload).execute()
+        return {"success": True, "data": resp.data}
 
     except Exception as e:
-        logger.error(f"💥 Create Task Error: {e}")
+        logger.exception("Create Task error")
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/tasks")
 def get_all_tasks():
-    """Fetch all tasks"""
     try:
-        logger.info("📋 Fetching all tasks...")
-        response = (
-            supabase_transcript.table("tasks")
-            .select("id, title, description, status, assigned_to, due_date, created_at")
+        resp = (
+            supabase.table("tasks")
+            .select("id, user_id, title, description, status, due_date, created_at")
             .order("created_at", desc=True)
             .execute()
         )
-
-        logger.info(f"✅ Retrieved {len(response.data)} tasks.")
-        return {"success": True, "data": response.data or []}
+        return {"success": True, "data": resp.data}
 
     except Exception as e:
-        logger.error(f"💥 Fetch Tasks Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.put("/tasks/{task_id}")
 def update_task(task_id: str, data: TaskData):
-    """Update task (status, description, or due date)"""
     try:
-        logger.info(f"✏️ Updating task ID: {task_id}")
-
         updates = {k: v for k, v in data.dict().items() if v is not None}
-        response = supabase_transcript.table("tasks").update(updates).eq("id", task_id).execute()
-
-        logger.info(f"✅ Task {task_id} updated successfully.")
-        return {"success": True, "message": "Task updated", "data": response.data}
+        resp = supabase.table("tasks").update(updates).eq("id", task_id).execute()
+        return {"success": True, "data": resp.data}
 
     except Exception as e:
-        logger.error(f"💥 Update Task Error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ===========================================================
+# MEETING TRANSCRIPTS + SUMMARIES (Unified)
+# ===========================================================
+@app.post("/meeting-transcript")
+def upload_transcript(data: TranscriptData):
+    try:
+        payload = {
+            "meeting_name": data.meeting_name,
+            "transcript": data.transcript,
+            "summary": data.summary,
+            "tasks": data.tasks,
+            "pending_tasks": data.pending_tasks,
+            "created_at": datetime.utcnow().isoformat(),
+        }
+
+        resp = supabase.table("transcripts").insert(payload).execute()
+        return {"success": True, "data": resp.data}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/meeting-transcript")
+def get_all_transcripts():
+    try:
+        resp = (
+            supabase.table("transcripts")
+            .select("*")
+            .order("created_at", desc=True)
+            .execute()
+        )
+        return {"success": True, "data": resp.data}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/meeting-summary")
+def get_meeting_summary():
+    try:
+        resp = (
+            supabase.table("transcripts")
+            .select("id, meeting_name, summary, tasks, pending_tasks, created_at")
+            .order("created_at", desc=True)
+            .limit(10)
+            .execute()
+        )
+        return {"success": True, "data": resp.data}
+
+    except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
